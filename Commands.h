@@ -8,7 +8,7 @@
 
 #include <string.h>
 class SmallShell;
-
+class JobsList;
 
 class Command {
 // TODO: Add your data members
@@ -21,6 +21,7 @@ protected:
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
+  char* getCmdLine() { return this->cmd_line;}
 };
 
 class BuiltInCommand : public Command {
@@ -56,10 +57,8 @@ class RedirectionCommand : public Command {
 
 class ChangeDirCommand : public BuiltInCommand {
 private:
-  char** plastPwd;
-  SmallShell* instance;
 public:
-  ChangeDirCommand(const char* cmd_line, char** plastPwd, SmallShell* instance);
+  ChangeDirCommand(const char* cmd_line);
   virtual ~ChangeDirCommand() {}
   void execute() override;
 };
@@ -79,18 +78,16 @@ class ShowPidCommand : public BuiltInCommand {
 };
 
 class ChangePromptCommand : public BuiltInCommand {
-  private:
-    SmallShell* instance;
   public:
-    ChangePromptCommand(const char* cmd_line, SmallShell* instance);
+    ChangePromptCommand(const char* cmd_line);
     virtual ~ChangePromptCommand() {}
     void execute() override;
 };
 
-class JobsList;
 class QuitCommand : public BuiltInCommand {
 // TODO: Add your data members public:
-  QuitCommand(const char* cmd_line, JobsList* jobs);
+public:
+  QuitCommand(const char* cmd_line);
   virtual ~QuitCommand() {}
   void execute() override;
 };
@@ -107,37 +104,35 @@ class JobsList {
    int pid;
    int work_time;
    double start_time;
-   JobEntry(int job_id, Command* cmd, int pid, int work_time, double start_time) 
-           : job_id(job_id), cmd(cmd), pid(pid), work_time(work_time), start_time(start_time) {}
+   bool isStopped;
+   JobEntry(int job_id, Command* cmd, int pid, int work_time, double start_time, bool isStopped) 
+           : job_id(job_id), cmd(cmd), pid(pid), work_time(work_time), start_time(start_time), isStopped(isStopped) {}
   };
- public:
-  std::vector<JobEntry> jobslist;
-  JobsList() { jobslist = std::vector<JobEntry>();}
-  void addJob(Command* cmd, bool isStopped = false);
+  std::vector<JobEntry*> jobslist;
+  JobsList() { jobslist = std::vector<JobEntry*>();}
+  void addJob(Command* cmd, pid_t pid, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
   JobEntry * getJobById(int jobId);
   void removeJobById(int jobId);
-  JobEntry * getLastJob(int* lastJobId);
-  JobEntry *getLastStoppedJob(int *jobId);
+  JobEntry * getLastJob();
+  JobEntry *getLastStoppedJob();
   // TODO: Add extra methods or modify exisitng ones as needed
+  int getNextJobId();
 };
 
 class JobsCommand : public BuiltInCommand {
- public:
-  JobsList* jobs;
-  
-  JobsCommand(const char* cmd_line, JobsList* jobs);
+ public:  
+  JobsCommand(const char* cmd_line);
   virtual ~JobsCommand() {}
   void execute() override;
 };
 
 class KillCommand : public BuiltInCommand {
- JobsList* jobs;
 
  public:
-  KillCommand(const char* cmd_line, JobsList* jobs);
+  KillCommand(const char* cmd_line);
   virtual ~KillCommand() {}
   void execute() override;
 };
@@ -145,7 +140,7 @@ class KillCommand : public BuiltInCommand {
 class ForegroundCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
-  ForegroundCommand(const char* cmd_line, JobsList* jobs);
+  ForegroundCommand(const char* cmd_line);
   virtual ~ForegroundCommand() {}
   void execute() override;
 };
@@ -153,7 +148,7 @@ class ForegroundCommand : public BuiltInCommand {
 class BackgroundCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
-  BackgroundCommand(const char* cmd_line, JobsList* jobs);
+  BackgroundCommand(const char* cmd_line);
   virtual ~BackgroundCommand() {}
   void execute() override;
 };
@@ -181,6 +176,7 @@ class SmallShell {
   char* plastPwd[1];
   char prompt[80];
   JobsList* joblist;
+  pid_t fg_pid;
 
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
@@ -196,5 +192,7 @@ class SmallShell {
   // TODO: add extra methods as needed
   void setPrompt(const char* new_p);
 };
+
+bool isFgRunning(); // for signals
 
 #endif //SMASH_COMMAND_H_
