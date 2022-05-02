@@ -104,6 +104,7 @@ SmallShell::SmallShell() {
   strcpy(this->prompt, "smash> ");
   *this->plastPwd = nullptr;
   this->joblist = new JobsList();
+  this->fg_pid = 0;
 }
 
 SmallShell::~SmallShell() {
@@ -150,10 +151,10 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   {
     return new ForegroundCommand(cmd_line);
   }
-  /*else if(firstWord.compare("bg") == 0)
+  else if(firstWord.compare("bg") == 0)
   {
     return new BackgroundCommand(cmd_line);
-  }*/
+  }
   else if(firstWord.compare("quit") == 0)
   {
     return new QuitCommand(cmd_line);
@@ -180,7 +181,7 @@ void JobsList::printJobsList()
   //stopped?
   for(auto job: this->jobslist)
   {
-    int time_ = difftime(time(NULL), job->start_time) + job->work_time;
+    time_t time_ = difftime(time(NULL), job->start_time) + job->work_time;
     if(job->isStopped)
     {
       time_ = job->work_time;
@@ -198,8 +199,9 @@ void JobsList::removeFinishedJobs()
   std::vector<JobEntry*>& joblist = SmallShell::getInstance().joblist->jobslist;
   for(auto it = joblist.begin(); it != joblist.end(); )
   {
-    if(waitpid((*it)->pid, nullptr, WNOHANG | WUNTRACED)) // WCONTINUED
+    if(waitpid((*it)->pid, nullptr, WNOHANG )) // | WUNTRACED | WCONTINUED
     {
+      cout << "hey" << (*it)->pid << endl;
       joblist.erase(it);
     }
     else
@@ -420,6 +422,8 @@ void ExternalCommand::execute()
       {
         //err
       }
+      cout << "Hey" << endl;
+      SmallShell::getInstance().fg_pid = 0;
     }
   }
   else //son
@@ -440,6 +444,7 @@ bool isFgRunning()
 {
   SmallShell& instance = SmallShell::getInstance();
   pid_t fg_pid = instance.fg_pid;
+  cout << "FG: " << fg_pid << endl;
   instance.joblist->removeFinishedJobs();
   auto joblist = instance.joblist->jobslist;
   for(auto job : joblist)
@@ -515,6 +520,7 @@ void ForegroundCommand::execute()
   {
     //err
   }
+  instance.fg_pid = 0;
 }
 
 /* BACKGROUNDCOMMAND */

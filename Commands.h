@@ -102,10 +102,10 @@ class JobsList {
    int job_id;
    Command* cmd;
    int pid;
-   int work_time;
-   double start_time;
+   time_t work_time;
+   time_t start_time;
    bool isStopped;
-   JobEntry(int job_id, Command* cmd, int pid, int work_time, double start_time, bool isStopped) 
+   JobEntry(int job_id, Command* cmd, int pid, time_t work_time, time_t start_time, bool isStopped) 
            : job_id(job_id), cmd(cmd), pid(pid), work_time(work_time), start_time(start_time), isStopped(isStopped) {}
   };
   std::vector<JobEntry*> jobslist;
