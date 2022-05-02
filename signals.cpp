@@ -16,7 +16,6 @@ void ctrlZHandler(int sig_num) {
       {
         job->isStopped = true;
         job->work_time += difftime(time(NULL), job->start_time);
-        //TODO: remember, init again start_time when running second time
       }
     }
     kill(instance.fg_pid, SIGSTOP);

@@ -120,11 +120,13 @@ void SmallShell::setPrompt(const char* new_p)
 */
 Command * SmallShell::CreateCommand(const char* cmd_line) {
 	// For example:
-  
+  char temp[80] = {0};
+  strcpy(temp, cmd_line);
+  _removeBackgroundSign(temp);
 
-  string cmd_s = _trim(string(cmd_line));
+  string cmd_s = _trim(string(temp));
   string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
+  
   if (firstWord.compare("pwd") == 0) {
     return new GetCurrDirCommand(cmd_line);
   }
@@ -172,7 +174,55 @@ void SmallShell::executeCommand(const char *cmd_line) {
   // cmd->execute();
   // Please note that you must fork smash process for some commands (e.g., external commands....)
   Command* cmd = CreateCommand(cmd_line);
+  char* args[20];
+  int nParams = _parseCommandLine(cmd_line, args) -1;
+  int son_pid = -1;
+  if(nParams >= 1)
+  {
+    if(strcmp(args[1], ">") == 0 || strcmp(args[1], ">>") == 0 || strcmp(args[1], "|") == 0 || strcmp(args[1], "|&") == 0) // where the redirection sign is ?? TODO
+    {
+        son_pid = fork();
+        if(son_pid > 0) return;
+        if(son_pid < 0) cerr << "fork failed" << endl; // TODO
+        if(strcmp(args[1], ">") == 0)
+        {
+            close(1);
+            fopen(args[2], "w"); //change args[2] to args[??] TODO
+
+        }
+        else if(strcmp(args[1], ">>") == 0)
+        {
+            close(1);
+            fopen(args[2], "a"); //change args[2] to args[??] TODO - maybe cmd_line + offset
+        }
+        else
+        {
+          int my_pipe[2];
+          pipe(my_pipe);
+          if(fork() == 0) //son of the son, close stdin
+          {
+            close(0);
+            dup(my_pipe[0]);
+            ///// create new command TODO
+          }
+          else // son of the father, close stdout/stderr
+          {
+            int loc = (strcmp(args[2], "|") == 0 ? 1 : 2);
+            close(loc);
+            dup(my_pipe[1]);
+          }
+        }
+
+        /*string cmd_s = _trim(string(temp));
+  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));*/
+    }
+  }
+  //TODO getppid
   cmd->execute();
+  if(son_pid != -1)
+  {
+    exit(1);
+  }
 }
 
 /* JOBBBBBBBBBBBB */
@@ -201,7 +251,6 @@ void JobsList::removeFinishedJobs()
   {
     if(waitpid((*it)->pid, nullptr, WNOHANG )) // | WUNTRACED | WCONTINUED
     {
-      cout << "hey" << (*it)->pid << endl;
       joblist.erase(it);
     }
     else
@@ -272,7 +321,13 @@ Command::Command(const char* cmd_line)
   strcpy(this->cmd_line, cmd_line);
 }
 /* BUILTIN */
-BuiltInCommand::BuiltInCommand(const char* cmd_line) : Command(cmd_line) {}
+BuiltInCommand::BuiltInCommand(const char* cmd_line) : Command(cmd_line) 
+{
+  char temp[80] = {0};
+  strcpy(temp, cmd_line);
+  _removeBackgroundSign(temp);
+  strcpy(this->cmd_line, temp);
+}
 
 /* CHPROMPT */
 ChangePromptCommand::ChangePromptCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
@@ -388,7 +443,7 @@ void KillCommand::execute()
         if(kill(job->pid, signum) == -1)
         {
           cerr << "smash error: kill failed" << std::endl;
-        }
+        } 
         return;
       }
     }
@@ -422,7 +477,6 @@ void ExternalCommand::execute()
       {
         //err
       }
-      cout << "Hey" << endl;
       SmallShell::getInstance().fg_pid = 0;
     }
   }
@@ -444,7 +498,6 @@ bool isFgRunning()
 {
   SmallShell& instance = SmallShell::getInstance();
   pid_t fg_pid = instance.fg_pid;
-  cout << "FG: " << fg_pid << endl;
   instance.joblist->removeFinishedJobs();
   auto joblist = instance.joblist->jobslist;
   for(auto job : joblist)
@@ -479,6 +532,7 @@ ForegroundCommand::ForegroundCommand(const char* cmd_line) : BuiltInCommand(cmd_
 void ForegroundCommand::execute()
 {
   SmallShell& instance = SmallShell::getInstance();
+  instance.joblist->removeFinishedJobs();
   char* args[20];
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
   if(nArgs > 1) //TODO: check for int/positive number?
@@ -505,16 +559,17 @@ void ForegroundCommand::execute()
       return;
     }
   }
+  cout << job->cmd->getCmdLine() << " : " << job->pid << endl;
   if(job->isStopped)
   {
     kill(job->pid, SIGCONT);
     job->start_time = time(NULL);
     job->isStopped = false;
-    instance.fg_pid = job->pid;
   }
+  instance.fg_pid = job->pid;
   int done = 0;
   do {
-    done = waitpid(job->pid, nullptr, WNOHANG | WUNTRACED); //WCONTINUED???
+    done = waitpid(job->pid, nullptr, WNOHANG | WUNTRACED); //  | WCONTINUED???
   } while(done == 0);
   if(done == -1)
   {
@@ -528,6 +583,7 @@ BackgroundCommand::BackgroundCommand(const char* cmd_line) : BuiltInCommand(cmd_
 void BackgroundCommand::execute()
 {
   SmallShell& instance = SmallShell::getInstance();
+  instance.joblist->removeFinishedJobs();
   char* args[20];
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
   if(nArgs > 1) //TODO: check for int/positive number?
@@ -563,5 +619,5 @@ void BackgroundCommand::execute()
   kill(job->pid, SIGCONT);
   job->start_time = time(NULL);
   job->isStopped = false;
-  instance.fg_pid = job->pid;
-} //TODO tests
+  cout << job->cmd->getCmdLine() << " : " << job->pid << endl;
+}
