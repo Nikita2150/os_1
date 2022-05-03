@@ -89,7 +89,7 @@ void _removeBackgroundSign(char* cmd_line) {
     return;
   }
   // if the command line does not end with & then return
-  if (cmd_line[idx] != '&') {
+  if (str.size() == 0 || str[idx] != '&') {
     return;
   }
   // replace the & (background sign) with space and then remove all tailing spaces.
@@ -167,61 +167,105 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   return nullptr;
 }
 
+char** _parseIOPipe(const char* cmd_line)
+{
+  char** ret_val = new char*[3];
+  for(int i = 0; i < 3; i++) ret_val[i] = new char[80];
+
+  int op_size = 0;
+  int i = 0;
+  for (; cmd_line[i]; i++)
+  {
+    if(cmd_line[i] == '>')
+    {
+      op_size = (i < 79 && cmd_line[i+1] == '>') ? 2 : 1;
+      break;
+    }
+    if(cmd_line[i] == '|')
+    {
+      op_size = (i < 79 && cmd_line[i+1] == '&') ? 2 : 1;
+      break;
+    }
+  }
+  if(!op_size)
+  {
+    for(int i = 0; i < 3; i++) delete[] ret_val[i];
+    delete[] ret_val;
+    return nullptr;
+  }
+  
+  //command1 seg
+  strncpy(ret_val[0], cmd_line, i);
+  ret_val[0][i] = '\0';
+  //op seg
+  strncpy(ret_val[1], cmd_line+i, op_size);
+  ret_val[1][op_size] = '\0';
+  //command2 seg
+  strcpy(ret_val[2], cmd_line+i+op_size);
+  string temp = _trim(ret_val[2]);
+  strcpy(ret_val[2], temp.c_str());
+
+  return ret_val;
+}
+
 void SmallShell::executeCommand(const char *cmd_line) {
   // TODO: Add your implementation here
   // for example:
   // Command* cmd = CreateCommand(cmd_line);
   // cmd->execute();
   // Please note that you must fork smash process for some commands (e.g., external commands....)
-  Command* cmd = CreateCommand(cmd_line);
-  char* args[20];
-  int nParams = _parseCommandLine(cmd_line, args) -1;
+  Command* cmd;
   int son_pid = -1;
-  if(nParams >= 1)
+  char** res = _parseIOPipe(cmd_line);
+  if(res)
   {
-    if(strcmp(args[1], ">") == 0 || strcmp(args[1], ">>") == 0 || strcmp(args[1], "|") == 0 || strcmp(args[1], "|&") == 0) // where the redirection sign is ?? TODO
+    cmd = CreateCommand(string(res[0]).c_str()); //cmd = command1
+    son_pid = fork();
+    if(son_pid > 0) return;
+    if(son_pid < 0) cerr << "fork failed" << endl; // TODO
+    if(strcmp(res[1], ">") == 0)
     {
-        son_pid = fork();
-        if(son_pid > 0) return;
-        if(son_pid < 0) cerr << "fork failed" << endl; // TODO
-        if(strcmp(args[1], ">") == 0)
-        {
-            close(1);
-            fopen(args[2], "w"); //change args[2] to args[??] TODO
+        close(1);
+        fopen(res[2], "w");
 
-        }
-        else if(strcmp(args[1], ">>") == 0)
-        {
-            close(1);
-            fopen(args[2], "a"); //change args[2] to args[??] TODO - maybe cmd_line + offset
-        }
-        else
-        {
-          int my_pipe[2];
-          pipe(my_pipe);
-          if(fork() == 0) //son of the son, close stdin
-          {
-            close(0);
-            dup(my_pipe[0]);
-            ///// create new command TODO
-          }
-          else // son of the father, close stdout/stderr
-          {
-            int loc = (strcmp(args[2], "|") == 0 ? 1 : 2);
-            close(loc);
-            dup(my_pipe[1]);
-          }
-        }
-
-        /*string cmd_s = _trim(string(temp));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));*/
     }
+    else if(strcmp(res[1], ">>") == 0)
+    {
+        close(1);
+        fopen(res[2], "a");
+    }
+    else
+    {
+      int my_pipe[2];
+      pipe(my_pipe);
+      if(fork() == 0) //son of the son, close stdin
+      {
+        close(0);
+        dup(my_pipe[0]);
+        cmd = CreateCommand(res[2]);
+      }
+      else // son of the father, close stdout/stderr
+      {
+        int loc = (strcmp(res[2], "|") == 0 ? 1 : 2);
+        close(loc);
+        dup(my_pipe[1]);
+      }
+    }
+
+
+    for(int i = 0; i < 3; i++)
+      delete[] res[i];
+    delete[] res;
+  }
+  else
+  {
+    cmd = CreateCommand(cmd_line);
   }
   //TODO getppid
   cmd->execute();
   if(son_pid != -1)
   {
-    exit(1);
+    exit(1); //In case we ran the command on a fork, we want to delete the fork
   }
 }
 
