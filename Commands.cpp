@@ -215,14 +215,20 @@ void SmallShell::executeCommand(const char *cmd_line) {
   // cmd->execute();
   // Please note that you must fork smash process for some commands (e.g., external commands....)
   Command* cmd;
-  int son_pid = -1;
+  int son_pid = -1, grandson_pid = -1, done = 0;
   char** res = _parseIOPipe(cmd_line);
   if(res)
   {
     cmd = CreateCommand(string(res[0]).c_str()); //cmd = command1
     son_pid = fork();
-    if(son_pid > 0) return;
-    if(son_pid < 0) cerr << "fork failed" << endl; // TODO
+    if(son_pid > 0)
+    {
+      do {
+        done = waitpid(son_pid, nullptr, WNOHANG | WUNTRACED | WCONTINUED);
+      } while(done == 0);
+      return;
+    } 
+    if(son_pid < 0) perror("smash error: fork failed"); 
     if(strcmp(res[1], ">") == 0)
     {
         close(1);
@@ -238,20 +244,22 @@ void SmallShell::executeCommand(const char *cmd_line) {
     {
       int my_pipe[2];
       pipe(my_pipe);
-      if(fork() == 0) //son of the son, close stdin
+      grandson_pid = fork();
+      if(grandson_pid < 0) perror("smash error: fork failed");
+      else if(grandson_pid > 0) // son of the father,input is now throgh the pipe 
       {
-        close(0);
-        dup(my_pipe[0]);
-        cmd = CreateCommand(res[2]);
+        close(my_pipe[1]);
+        dup2(my_pipe[0], 0);
+        cmd = CreateCommand(string(res[2]).c_str());
       }
-      else // son of the father, close stdout/stderr
+      else //grandson_pid == 0, son of the son, close standard stdout/stderr, output is now throgh the pipe
       {
-        int loc = (strcmp(res[2], "|") == 0 ? 1 : 2);
-        close(loc);
-        dup(my_pipe[1]);
+        close(my_pipe[0]);
+        int loc = ((strcmp(res[1], "|") == 0) ? 1 : 2);
+        dup2(my_pipe[1], loc);
+
       }
     }
-
 
     for(int i = 0; i < 3; i++)
       delete[] res[i];
@@ -263,6 +271,12 @@ void SmallShell::executeCommand(const char *cmd_line) {
   }
   //TODO getppid
   cmd->execute();
+  if(grandson_pid > 0) //enter only in the son proccess
+  {
+    do {
+      done = waitpid(grandson_pid, nullptr, WNOHANG | WUNTRACED | WCONTINUED);
+    } while(done == 0); 
+  }
   if(son_pid != -1)
   {
     exit(1); //In case we ran the command on a fork, we want to delete the fork
@@ -519,7 +533,7 @@ void ExternalCommand::execute()
       } while(done == 0);
       if(done == -1)
       {
-        //err
+        //err TODO
       }
       SmallShell::getInstance().fg_pid = 0;
     }
