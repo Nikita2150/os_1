@@ -219,49 +219,37 @@ char** _parseIOPipe(const char* cmd_line)
 
 void SmallShell::executeCommand(const char *cmd_line) {
   Command* cmd;
-  int son_pid = -1, grandson_pid = -1, done = 0;
+  int son_pid = -1, done = 0;
   char** res = _parseIOPipe(cmd_line);
+  int std_fd;
+  int my_pipe[2], loc = 0;
   if(res)
   {
-    cmd = CreateCommand(string(res[0]).c_str()); //cmd = command1
-    son_pid = fork();
-    if(son_pid > 0)
+    if(strcmp(res[1], ">") == 0 || strcmp(res[1], ">>") == 0)
     {
-      do {
-        done = waitpid(son_pid, nullptr, WNOHANG | WUNTRACED | WCONTINUED);
-      } while(done == 0);
-      return;
-    } 
-    if(son_pid < 0) perror("smash error: fork failed"); 
-    if(strcmp(res[1], ">") == 0)
-    {
-        close(1);
-        fopen(res[2], "w");
-
-    }
-    else if(strcmp(res[1], ">>") == 0)
-    {
-        close(1);
-        fopen(res[2], "a");
+      cmd = CreateCommand(string(res[0]).c_str()); //cmd = command1
+      std_fd = dup(1);
+      close(1);
+      fopen(res[2], strcmp(res[1], ">") == 0 ? "w" : "a");
     }
     else
     {
-      int my_pipe[2];
       pipe(my_pipe);
-      grandson_pid = fork();
-      if(grandson_pid < 0) perror("smash error: fork failed");
-      else if(grandson_pid > 0) // son of the father,input is now throgh the pipe 
+      son_pid = fork();
+      if(son_pid < 0) perror("smash error: fork failed");
+      else if(son_pid > 0) // father, output is now through the pipe 
+      {
+        loc = (strcmp(res[1], "|") == 0) ? 1 : 2;
+        std_fd = dup(loc);
+        close(my_pipe[0]);
+        dup2(my_pipe[1], loc);
+        cmd = CreateCommand(string(res[0]).c_str());
+      }
+      else //son_pid == 0, close standard stdin, input is now throgh the pipe
       {
         close(my_pipe[1]);
         dup2(my_pipe[0], 0);
         cmd = CreateCommand(string(res[2]).c_str());
-      }
-      else //grandson_pid == 0, son of the son, close standard stdout/stderr, output is now throgh the pipe
-      {
-        close(my_pipe[0]);
-        int loc = ((strcmp(res[1], "|") == 0) ? 1 : 2);
-        dup2(my_pipe[1], loc);
-
       }
     }
 
@@ -274,13 +262,26 @@ void SmallShell::executeCommand(const char *cmd_line) {
     cmd = CreateCommand(cmd_line);
   }
   cmd->execute();
-  if(grandson_pid > 0) //enter only in the son proccess
+  
+  if(son_pid && std_fd) //if not child and changed the std fd
   {
-    do {
-      done = waitpid(grandson_pid, nullptr, WNOHANG | WUNTRACED | WCONTINUED);
-    } while(done == 0); 
+    if(loc) //if we used pipe
+      dup2(std_fd, loc);
+    else
+      dup2(std_fd, 1);
   }
-  if(son_pid != -1)
+
+  
+  if(son_pid > 0) //enter only in the father process
+  {
+    close(my_pipe[1]); //closing the pipe so the fork won't wait for input anymore
+    
+    do {
+      done = waitpid(son_pid, nullptr, WNOHANG | WUNTRACED | WCONTINUED);
+    } while(done == 0);
+  }
+
+  if(son_pid == 0)
   {
     exit(1); //In case we ran the command on a fork, we want to delete the fork
   }
