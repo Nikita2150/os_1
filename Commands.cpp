@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <sstream>
+#include <fstream>
 #include <sys/wait.h>
 #include <iomanip>
 #include "Commands.h"
@@ -56,7 +57,7 @@ int _parseCommandLine(const char* cmd_line, char** args) {
   FUNC_EXIT()
 }
 
-int _charStoInt(char* val)
+int _charStoInt(const char* val)
 {
   int num = 0;
   int neg = 1;
@@ -98,13 +99,13 @@ void _removeBackgroundSign(char* cmd_line) {
   cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-// TODO: Add your implementation for classes in Commands.h 
 
 SmallShell::SmallShell() {
   strcpy(this->prompt, "smash> ");
   *this->plastPwd = nullptr;
   this->joblist = new JobsList();
   this->fg_pid = 0;
+  this->my_pid = getpid();
 }
 
 SmallShell::~SmallShell() {
@@ -161,6 +162,14 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   {
     return new QuitCommand(cmd_line);
   }
+  else if(firstWord.compare("tail") == 0)
+  {
+    return new TailCommand(cmd_line);
+  }
+  else if(firstWord.compare("touch") == 0)
+  {
+    return new TouchCommand(cmd_line);
+  }
   else {
     return new ExternalCommand(cmd_line);
   }
@@ -209,11 +218,6 @@ char** _parseIOPipe(const char* cmd_line)
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-  // TODO: Add your implementation here
-  // for example:
-  // Command* cmd = CreateCommand(cmd_line);
-  // cmd->execute();
-  // Please note that you must fork smash process for some commands (e.g., external commands....)
   Command* cmd;
   int son_pid = -1, grandson_pid = -1, done = 0;
   char** res = _parseIOPipe(cmd_line);
@@ -269,7 +273,6 @@ void SmallShell::executeCommand(const char *cmd_line) {
   {
     cmd = CreateCommand(cmd_line);
   }
-  //TODO getppid
   cmd->execute();
   if(grandson_pid > 0) //enter only in the son proccess
   {
@@ -286,7 +289,6 @@ void SmallShell::executeCommand(const char *cmd_line) {
 /* JOBBBBBBBBBBBB */
 void JobsList::printJobsList()
 {
-  //stopped?
   for(auto job: this->jobslist)
   {
     time_t time_ = difftime(time(NULL), job->start_time) + job->work_time;
@@ -330,6 +332,7 @@ int JobsList::getNextJobId()
 }
 void JobsList::addJob(Command* cmd, pid_t pid, bool isStopped)
 {
+  this->removeFinishedJobs();
   JobsList::JobEntry* newEntry = new JobsList::JobEntry(this->getNextJobId(), cmd, pid, 0, time(NULL), isStopped);
   this->jobslist.push_back(newEntry);
 }
@@ -417,7 +420,7 @@ void ChangePromptCommand::execute()
 ShowPidCommand::ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 void ShowPidCommand::execute()
 {
-  cout << "smash pid is " << getpid() << std::endl;
+  cout << "smash pid is " << SmallShell::getInstance().my_pid << std::endl;
 }
 
 /*  GETTCURRDIRCOMMAND */
@@ -463,7 +466,7 @@ void ChangeDirCommand::execute()
       *instance.plastPwd = getcwd(NULL, 0);
       if(chdir(args[1]) == -1)
       {
-        cerr << "smash error: chdir failed" << std::endl; //TODO chdir or cd?, perror or cerr????
+        perror("smash error: chdir failed"); //TODO chdir or cd?, perror or cerr????
       }
     }
   }
@@ -486,27 +489,36 @@ void KillCommand::execute()
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
   int jid;
   JobsList* jobs = SmallShell::getInstance().joblist;
-  if(nArgs != 2 || _charStoInt(args[1]) > 0)
+  try
+  {
+    if(nArgs != 2 || _charStoInt(args[1]) > 0)
+    {
+      cerr << "smash error: kill: invalid arguments" << std::endl;
+    }
+    else
+    {
+      int signum = (-1) * _charStoInt(args[1]);
+      jid = _charStoInt(args[2]); 
+      for (auto job : jobs->jobslist)
+      {
+        if(job->job_id == jid)
+        {
+          if(kill(job->pid, signum) == -1)
+          {
+            cerr << "smash error: kill failed" << std::endl;
+          } 
+          return;
+        }
+      }
+      cerr << "smash error: kill: job-id " << jid << " does not exist"  << std::endl;
+    }
+  }
+  catch(...)
   {
     cerr << "smash error: kill: invalid arguments" << std::endl;
   }
-  else
-  {
-    int signum = (-1) * _charStoInt(args[1]);
-    jid = _charStoInt(args[2]); 
-    for (auto job : jobs->jobslist)
-    {
-      if(job->job_id == jid) //TODO, if signum is 9 (stop), time
-      {
-        if(kill(job->pid, signum) == -1)
-        {
-          cerr << "smash error: kill failed" << std::endl;
-        } 
-        return;
-      }
-    }
-    cerr << "smash error: kill: job-id " << jid << " does not exist"  << std::endl;
-  }
+  
+  
 }
 
 /*  EXTERNALCOMMAND*/
@@ -573,6 +585,7 @@ void QuitCommand::execute()
   char* args[20];
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
   SmallShell& instance = SmallShell::getInstance();
+  instance.joblist->removeFinishedJobs();
   if (nArgs > 0 && strcmp(args[1], "kill") == 0)
   {
     cout << "smash: sending SIGKILL signal to " << instance.joblist->jobslist.size() <<" jobs:" << endl; 
@@ -582,7 +595,7 @@ void QuitCommand::execute()
     }
   }
   instance.joblist->killAllJobs();
-  exit(1); // TODO
+  exit(1); // TODO 1?
 }
 
 /* FOREGROUNDCOMMAND */
@@ -593,7 +606,7 @@ void ForegroundCommand::execute()
   instance.joblist->removeFinishedJobs();
   char* args[20];
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
-  if(nArgs > 1) //TODO: check for int/positive number?
+  if(nArgs > 1)
   {
     cerr << "smash error: fg: invalid arguments" << endl;
     return;
@@ -644,7 +657,7 @@ void BackgroundCommand::execute()
   instance.joblist->removeFinishedJobs();
   char* args[20];
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
-  if(nArgs > 1) //TODO: check for int/positive number?
+  if(nArgs > 1)
   {
     cerr << "smash error: bg: invalid arguments" << endl;
     return;
@@ -678,4 +691,98 @@ void BackgroundCommand::execute()
   job->start_time = time(NULL);
   job->isStopped = false;
   cout << job->cmd->getCmdLine() << " : " << job->pid << endl;
+}
+/* TAILCOMMAND */
+TailCommand::TailCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+void TailCommand::execute()
+{
+  char* args[20];
+  int nArgs = _parseCommandLine(cmd_line, args) - 1;
+  int N = 10;
+  try
+  {
+    if(nArgs > 2 || nArgs == 0)
+    {
+      throw std::exception();
+    }
+    else if(nArgs == 2)
+    {
+      N = _charStoInt(args[1]) *(-1);
+      if(N < 0 || args[1][0] != '-')
+      {
+        throw std::exception();
+      }
+    }
+    char file_name[80];
+    strcpy(file_name, _trim(string(args[nArgs])).c_str());
+    ifstream desc(file_name);
+    if(!(desc.is_open()))
+    {
+      perror("smash error: open failed");
+      return;
+    }
+    int nLines = 0;
+    std::string temp;
+    while(std::getline(desc, temp))
+    {
+      nLines ++;
+    }
+    ifstream desc2(file_name);
+    if(!(desc2.is_open()))
+    {
+      perror("smash error: open failed");
+      return;
+    }
+    int i = (nLines > N) ? nLines - N : 0;
+    for(int j = 0; j <= i; j++ && std::getline(desc2, temp)) {}
+    std::string buffer;
+    while(std::getline(desc2, buffer))
+    {
+      cout << buffer << endl;
+    }
+  }
+  catch(...)
+  {
+    cerr << "smash error: tail: invalid arguments" << std::endl;
+
+  }
+}
+
+/* TOUCHCOMMAND */
+
+TouchCommand::TouchCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+void TouchCommand::execute()
+{
+  char* args[20];
+  int nArgs = _parseCommandLine(cmd_line, args) - 1;
+  if(nArgs != 2)
+  {
+    cerr << "smash error: touch: invalid arguments" << endl;
+    return;
+  }
+  
+  std::string array[6];
+  int i=0;
+  std::string input(args[2]);
+  std::istringstream time_args(input);
+  while(std::getline(time_args,array[i++],':')) {}
+  struct tm* time_time = (struct tm*)malloc(sizeof(*time_time));
+  time_time->tm_sec = _charStoInt(array[0].c_str());
+  time_time->tm_min = _charStoInt(array[1].c_str());
+  time_time->tm_hour = _charStoInt(array[2].c_str());
+  time_time->tm_mday = _charStoInt(array[3].c_str());
+  time_time->tm_mon = _charStoInt(array[4].c_str())-1;
+  time_time->tm_year = _charStoInt(array[5].c_str())-1900;
+  time_time->tm_isdst = -1;
+  time_time->tm_wday = 0;
+  time_time->tm_yday = 0;
+  time_t Time = mktime(time_time);
+  //cout << Time << endl;
+  struct utimbuf* times = (struct utimbuf*)malloc(sizeof(*times));
+  times->actime = Time;
+  times->modtime = Time;
+  if(utime(_trim(string(args[1])).c_str(), times) == -1)
+  {
+    perror("smash error: utime failed");
+  }
 }

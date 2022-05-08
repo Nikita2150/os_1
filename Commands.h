@@ -11,7 +11,6 @@ class SmallShell;
 class JobsList;
 
 class Command {
-// TODO: Add your data members
 protected:
    char cmd_line[80];
  public:
@@ -20,7 +19,6 @@ protected:
   virtual void execute() = 0;
   //virtual void prepare();
   //virtual void cleanup();
-  // TODO: Add your extra methods if needed
   char* getCmdLine() { return this->cmd_line;}
 };
 
@@ -38,7 +36,6 @@ class ExternalCommand : public Command {
 };
 
 class PipeCommand : public Command {
-  // TODO: Add your data members
  public:
   PipeCommand(const char* cmd_line);
   virtual ~PipeCommand() {}
@@ -46,7 +43,6 @@ class PipeCommand : public Command {
 };
 
 class RedirectionCommand : public Command {
- // TODO: Add your data members
  public:
   explicit RedirectionCommand(const char* cmd_line);
   virtual ~RedirectionCommand() {}
@@ -85,7 +81,6 @@ class ChangePromptCommand : public BuiltInCommand {
 };
 
 class QuitCommand : public BuiltInCommand {
-// TODO: Add your data members public:
 public:
   QuitCommand(const char* cmd_line);
   virtual ~QuitCommand() {}
@@ -118,7 +113,6 @@ class JobsList {
   void removeJobById(int jobId);
   JobEntry * getLastJob();
   JobEntry *getLastStoppedJob();
-  // TODO: Add extra methods or modify exisitng ones as needed
   int getNextJobId();
 };
 
@@ -138,7 +132,7 @@ class KillCommand : public BuiltInCommand {
 };
 
 class ForegroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+
  public:
   ForegroundCommand(const char* cmd_line);
   virtual ~ForegroundCommand() {}
@@ -146,7 +140,7 @@ class ForegroundCommand : public BuiltInCommand {
 };
 
 class BackgroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+
  public:
   BackgroundCommand(const char* cmd_line);
   virtual ~BackgroundCommand() {}
@@ -170,14 +164,13 @@ class TouchCommand : public BuiltInCommand {
 
 class SmallShell {
  private:
-  
   SmallShell();
  public:
   char* plastPwd[1];
   char prompt[80];
   JobsList* joblist;
   pid_t fg_pid;
-
+  pid_t my_pid;
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
   void operator=(SmallShell const&)  = delete; // disable = operator
@@ -189,7 +182,6 @@ class SmallShell {
   }
   ~SmallShell();
   void executeCommand(const char* cmd_line);
-  // TODO: add extra methods as needed
   void setPrompt(const char* new_p);
 };
 
