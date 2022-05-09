@@ -8,7 +8,7 @@
 #include "Commands.h"
 #include <time.h>
 #include <utime.h>
-
+#include <fcntl.h>
 
 using namespace std;
 
@@ -64,11 +64,12 @@ int _charStoInt(const char* val)
   for(int i = 0; i < 80; i++)
   {
     if(val[i] == '\0') break;
-    if(val[i] == '-')
+    if(val[i] == '-' && neg > 0) //so only first '-' will count as minus
     { 
       neg = -1;
       continue;
     }
+    if(val[i] < '0' || val[i] > '9') throw std::exception(); //val[i] isn't a number..
     num *= 10;
     num += val[i] - 48;
   }
@@ -223,6 +224,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
   char** res = _parseIOPipe(cmd_line);
   int std_fd;
   int my_pipe[2], loc = 0;
+  int new_fd = 0;
   if(res)
   {
     if(strcmp(res[1], ">") == 0 || strcmp(res[1], ">>") == 0)
@@ -230,7 +232,21 @@ void SmallShell::executeCommand(const char *cmd_line) {
       cmd = CreateCommand(string(res[0]).c_str()); //cmd = command1
       std_fd = dup(1);
       close(1);
-      fopen(res[2], strcmp(res[1], ">") == 0 ? "w" : "a");
+      if(strcmp(res[1], ">")== 0)
+      {
+        new_fd = open(res[2], O_CREAT | O_WRONLY | O_TRUNC,S_IROTH | S_IXOTH|S_IRGRP|S_IXGRP|S_IRUSR|S_IWUSR);
+      }
+      else
+      {
+        new_fd = open(res[2], O_CREAT | O_WRONLY | O_APPEND, S_IROTH | S_IXOTH|S_IRGRP|S_IXGRP|S_IRUSR|S_IWUSR);
+      }
+      
+      if(new_fd == -1) /*failed*/
+      {
+        dup2(std_fd, 1);
+        perror("smash error: open failed");
+        return;
+      }
     }
     else
     {
@@ -263,6 +279,9 @@ void SmallShell::executeCommand(const char *cmd_line) {
   }
   cmd->execute();
   
+  if(new_fd)
+    close(new_fd);
+
   if(son_pid && std_fd) //if not child and changed the std fd
   {
     if(loc) //if we used pipe
@@ -450,25 +469,31 @@ void ChangeDirCommand::execute()
     {
       if(*plastPwd == nullptr)
       {
-        cerr << "smash error: OLDPWD not set" << std::endl;
+        cerr << "smash error: cd: OLDPWD not set" << std::endl;
       }
       else
       {
         char* temp;
         temp = getcwd(NULL, 0);
-        chdir(*plastPwd);
+        if(chdir(*plastPwd) == -1)
+        {
+          perror("smash error: chdir failed");
+          return;
+        }
         //memory leak
         *instance.plastPwd = temp;
       }
     }
     else
     {
+      char* prev_dir = getcwd(NULL, 0);
       //memory leak
-      *instance.plastPwd = getcwd(NULL, 0);
       if(chdir(args[1]) == -1)
       {
-        perror("smash error: chdir failed"); //TODO chdir or cd?, perror or cerr????
+        perror("smash error: chdir failed");
+        return;
       }
+      *instance.plastPwd = prev_dir;
     }
   }
 }
@@ -490,10 +515,11 @@ void KillCommand::execute()
   int nArgs = _parseCommandLine(cmd_line, args) - 1;
   int jid;
   JobsList* jobs = SmallShell::getInstance().joblist;
+  jobs->removeFinishedJobs();
   try
   {
-    if(nArgs != 2 || _charStoInt(args[1]) > 0)
-    {
+    if(nArgs != 2 || _charStoInt(args[1]) > -1 || _charStoInt(args[1]) < -64)
+    { // 1 <= signum <= 64
       cerr << "smash error: kill: invalid arguments" << std::endl;
     }
     else
@@ -506,8 +532,12 @@ void KillCommand::execute()
         {
           if(kill(job->pid, signum) == -1)
           {
-            cerr << "smash error: kill failed" << std::endl;
+            perror("smash error: kill failed");
           } 
+          else
+          {
+            cout << "signal number " << signum << " was sent to pid " << job->pid << endl;
+          }
           return;
         }
       }
@@ -613,41 +643,48 @@ void ForegroundCommand::execute()
     return;
   }
   JobsList::JobEntry* job;
-  if(nArgs == 0)
+  try
   {
-    job = instance.joblist->getLastJob();
-    if(job == nullptr)
+    if(nArgs == 0)
     {
-      cerr << "smash error: fg: jobs list is empty" << endl;
-      return;
+      job = instance.joblist->getLastJob();
+      if(job == nullptr)
+      {
+        cerr << "smash error: fg: jobs list is empty" << endl;
+        return;
+      }
     }
-  }
-  else
-  {
-    job = instance.joblist->getJobById(_charStoInt(args[1]));
-    if(job == nullptr)
+    else
     {
-      cerr << "smash error: fg: job-id " << _charStoInt(args[1]) <<" does not exist" << endl;
-      return;
+      job = instance.joblist->getJobById(_charStoInt(args[1]));
+      if(job == nullptr)
+      {
+        cerr << "smash error: fg: job-id " << _charStoInt(args[1]) <<" does not exist" << endl;
+        return;
+      }
     }
+    cout << job->cmd->getCmdLine() << " : " << job->pid << endl;
+    if(job->isStopped)
+    {
+      kill(job->pid, SIGCONT);
+      job->start_time = time(NULL);
+      job->isStopped = false;
+    }
+    instance.fg_pid = job->pid;
+    int done = 0;
+    do {
+      done = waitpid(job->pid, nullptr, WNOHANG | WUNTRACED); //  | WCONTINUED???
+    } while(done == 0);
+    if(done == -1)
+    {
+      //err
+    }
+    instance.fg_pid = 0;
   }
-  cout << job->cmd->getCmdLine() << " : " << job->pid << endl;
-  if(job->isStopped)
+  catch(...)
   {
-    kill(job->pid, SIGCONT);
-    job->start_time = time(NULL);
-    job->isStopped = false;
+    cerr << "smash error: fg: invalid arguments" << endl;
   }
-  instance.fg_pid = job->pid;
-  int done = 0;
-  do {
-    done = waitpid(job->pid, nullptr, WNOHANG | WUNTRACED); //  | WCONTINUED???
-  } while(done == 0);
-  if(done == -1)
-  {
-    //err
-  }
-  instance.fg_pid = 0;
 }
 
 /* BACKGROUNDCOMMAND */
@@ -684,7 +721,7 @@ void BackgroundCommand::execute()
     }
     if(job->isStopped == false)
     {
-      cerr << "smash error: bg: job-id " << _charStoInt(args[1]) << " is already runnig in the background" << endl;
+      cerr << "smash error: bg: job-id " << _charStoInt(args[1]) << " is already running in the background" << endl;
       return;
     }
   }
@@ -728,6 +765,11 @@ void TailCommand::execute()
     {
       nLines ++;
     }
+    if(desc.bad()) //the while ended before eof
+    {
+      perror("smash error: read failed");
+      return;
+    }
     ifstream desc2(file_name);
     if(!(desc2.is_open()))
     {
@@ -735,12 +777,10 @@ void TailCommand::execute()
       return;
     }
     int i = (nLines > N) ? nLines - N : 0;
+    int new_N = nLines-i; //number of lines we should actually print
     for(int j = 0; j <= i; j++ && std::getline(desc2, temp)) {}
-    std::string buffer;
-    while(std::getline(desc2, buffer))
-    {
-      cout << buffer << endl;
-    }
+    if(new_N != 0) //when new_N = 0 it does wierd things
+      cout << desc2.rdbuf() << flush;
   }
   catch(...)
   {
@@ -778,7 +818,6 @@ void TouchCommand::execute()
   time_time->tm_wday = 0;
   time_time->tm_yday = 0;
   time_t Time = mktime(time_time);
-  //cout << Time << endl;
   struct utimbuf* times = (struct utimbuf*)malloc(sizeof(*times));
   times->actime = Time;
   times->modtime = Time;
